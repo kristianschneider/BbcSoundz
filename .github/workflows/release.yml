@@ -8,6 +8,9 @@ on:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    permissions:
+      contents: write
+      packages: write
     
     steps:
     - name: Checkout code
@@ -17,6 +20,13 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '9.0.x'
+        
+    - name: Clear NuGet sources and add only nuget.org
+      run: |
+        dotnet nuget list source
+        dotnet nuget remove source "VaaS" --configfile nuget.config 2>$null || true
+        dotnet nuget add source "https://api.nuget.org/v3/index.json" --name "nuget.org" --configfile nuget.config 2>$null || true
+        dotnet nuget list source
         
     - name: Restore dependencies
       run: dotnet restore
@@ -31,6 +41,13 @@ jobs:
     - name: Publish application (Framework-dependent)
       run: |
         dotnet publish --configuration Release --runtime win-x64 --self-contained false --output ./publish/win-x64-fx -p:PublishSingleFile=true
+        
+    - name: List published files (Debug)
+      run: |
+        echo "=== Self-contained files ==="
+        Get-ChildItem -Path "./publish/win-x64" -Recurse | Format-Table Name, Length
+        echo "=== Framework-dependent files ==="
+        Get-ChildItem -Path "./publish/win-x64-fx" -Recurse | Format-Table Name, Length
         
     - name: Create release directories
       run: |
@@ -56,15 +73,16 @@ jobs:
         echo "version=$version" >> $env:GITHUB_OUTPUT
         
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name }}
-        release_name: BBC Soundz v${{ steps.version.outputs.version }}
+        name: BBC Soundz v${{ steps.version.outputs.version }}
         draft: false
         prerelease: false
+        files: |
+          ./release-artifacts/BbcSoundz-${{ github.ref_name }}-win-x64-standalone.zip
+          ./release-artifacts/BbcSoundz-${{ github.ref_name }}-win-x64-fx.zip
+          ./release-artifacts/checksums.txt
         body: |
           ## BBC Soundz v${{ steps.version.outputs.version }}
           
@@ -102,33 +120,3 @@ jobs:
           ---
           
           **Full Changelog**: https://github.com/${{ github.repository }}/compare/...HEAD
-          
-    - name: Upload Standalone Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-artifacts/BbcSoundz-${{ github.ref_name }}-win-x64-standalone.zip
-        asset_name: BbcSoundz-${{ github.ref_name }}-win-x64-standalone.zip
-        asset_content_type: application/zip
-        
-    - name: Upload Framework-dependent Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-artifacts/BbcSoundz-${{ github.ref_name }}-win-x64-fx.zip
-        asset_name: BbcSoundz-${{ github.ref_name }}-win-x64-fx.zip
-        asset_content_type: application/zip
-        
-    - name: Upload Checksums
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release-artifacts/checksums.txt
-        asset_name: checksums.txt
-        asset_content_type: text/plain
