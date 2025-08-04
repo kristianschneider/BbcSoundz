@@ -1,6 +1,6 @@
 # BBC Soundz Scraper
 
-A WPF application for scraping BBC Radio schedules and downloading shows using yt-dlp.
+A windows WPF application for scraping BBC Radio schedules and downloading shows using yt-dlp.
 
 ## Features
 

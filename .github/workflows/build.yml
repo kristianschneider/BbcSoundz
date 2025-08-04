@@ -1,0 +1,68 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+        
+    - name: Restore dependencies
+      run: dotnet restore
+      
+    - name: Build application
+      run: dotnet build --configuration Release --no-restore
+      
+    - name: Test build output
+      run: |
+        if (Test-Path "./bin/Release/net9.0-windows/BbcSoundz.exe") {
+          Write-Host "✅ Build successful - executable created"
+          exit 0
+        } else {
+          Write-Host "❌ Build failed - executable not found"
+          exit 1
+        }
+        
+    - name: Verify required files
+      run: |
+        $requiredFiles = @(
+          "./appsettings.json",
+          "./yt-dlp.exe",
+          "./README.md"
+        )
+        
+        $missing = @()
+        foreach ($file in $requiredFiles) {
+          if (-not (Test-Path $file)) {
+            $missing += $file
+          }
+        }
+        
+        if ($missing.Count -gt 0) {
+          Write-Host "❌ Missing required files:"
+          $missing | ForEach-Object { Write-Host "  - $_" }
+          exit 1
+        } else {
+          Write-Host "✅ All required files present"
+        }
+        
+    - name: Check for security issues
+      run: |
+        # Check for common security issues in config files
+        if (Get-Content "./appsettings.json" | Select-String -Pattern "(password|secret|key|token)" -CaseSensitive:$false) {
+          Write-Host "⚠️  Warning: Potential sensitive data in appsettings.json"
+        } else {
+          Write-Host "✅ No obvious sensitive data in config files"
+        }
