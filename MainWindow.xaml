@@ -1,0 +1,158 @@
+﻿<Window x:Class="BbcSoundz.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:BbcSoundz"
+        mc:Ignorable="d"
+        Title="BBC Soundz Scraper" Height="800" Width="1200"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <local:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <local:DownloadedColorConverter x:Key="DownloadedColorConverter"/>
+    </Window.Resources>
+    <Grid Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="2*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Left Panel - Search and Results -->
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Title -->
+            <TextBlock Grid.Row="0" Text="BBC Schedule Scraper" 
+                       FontSize="20" FontWeight="Bold" 
+                       HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+            <!-- Filter Input -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="Filter Shows:" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBox x:Name="FilterTextBox" Width="150" Height="25" 
+                         Text="Essential" VerticalAlignment="Center"/>
+                <Button x:Name="SearchButton" Content="Search" 
+                        Width="80" Height="30" Margin="10,0,0,0"
+                        Click="SearchButton_Click"/>
+            </StackPanel>
+
+            <!-- Progress and Status -->
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,10">
+                <ProgressBar x:Name="ProgressBar" Width="250" Height="20" 
+                             VerticalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock x:Name="StatusTextBlock" Text="Ready" 
+                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
+
+            <!-- Results List -->
+            <GroupBox Grid.Row="3" Header="Search Results" Margin="0,0,0,10">
+                <ListBox x:Name="ResultsListBox" 
+                         SelectionChanged="ResultsListBox_SelectionChanged"
+                         MouseDoubleClick="ResultsListBox_MouseDoubleClick">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="2">
+                                <TextBlock Text="▶" 
+                                           Foreground="LimeGreen" 
+                                           FontWeight="Bold" 
+                                           Margin="0,0,5,0"
+                                           Visibility="{Binding IsDownloaded, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           ToolTip="Already downloaded - double-click to play"/>
+                                <TextBlock Text="📁" 
+                                           Foreground="Orange" 
+                                           FontWeight="Bold" 
+                                           Margin="0,0,5,0"
+                                           Visibility="{Binding IsDownloaded, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           ToolTip="Downloaded file available"/>
+                                <TextBlock Text="{Binding DisplayName}" 
+                                           TextWrapping="Wrap"
+                                           FontFamily="Segoe UI"
+                                           FontSize="12"
+                                           Foreground="{Binding IsDownloaded, Converter={StaticResource DownloadedColorConverter}, FallbackValue=Black}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </GroupBox>
+
+            <!-- Selected Item Info -->
+            <GroupBox Grid.Row="4" Header="Selected Show Details" Height="80">
+                <StackPanel>
+                    <TextBlock x:Name="SelectedShowTextBlock" Text="No show selected" 
+                               FontWeight="Bold"/>
+                    <TextBlock x:Name="SelectedUrlTextBlock" Text="" 
+                               Foreground="Blue" TextWrapping="Wrap" 
+                               Cursor="Hand" 
+                               MouseLeftButtonUp="SelectedUrlTextBlock_MouseLeftButtonUp"/>
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+
+        <!-- Splitter -->
+        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" 
+                      Background="Gray" ResizeBehavior="PreviousAndNext"/>
+
+        <!-- Right Panel - Download Section -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Download Title -->
+            <TextBlock Grid.Row="0" Text="Download with yt-dlp" 
+                       FontSize="20" FontWeight="Bold" 
+                       HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+            <!-- Download Controls -->
+            <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                    <TextBlock Text="URL:" VerticalAlignment="Center" Margin="0,0,10,0" Width="30"/>
+                    <TextBox x:Name="DownloadUrlTextBox" Height="25" 
+                             IsReadOnly="True" Background="LightGray"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,5,0,10">
+                    <Button x:Name="DownloadButton" Content="Download" 
+                            Width="100" Height="30" Margin="0,0,10,0"
+                            Click="DownloadButton_Click" IsEnabled="False"/>
+                    <Button x:Name="StopDownloadButton" Content="Stop" 
+                            Width="80" Height="30" Margin="0,0,10,0"
+                            Click="StopDownloadButton_Click" IsEnabled="False"/>
+                    <Button x:Name="ClearOutputButton" Content="Clear Output" 
+                            Width="100" Height="30"
+                            Click="ClearOutputButton_Click"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Download Output -->
+            <GroupBox Grid.Row="2" Header="yt-dlp Output" Margin="0,0,0,10">
+                <ScrollViewer x:Name="OutputScrollViewer" VerticalScrollBarVisibility="Auto">
+                    <RichTextBox x:Name="OutputRichTextBox" 
+                                 IsReadOnly="True" 
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 Background="Black"
+                                 Foreground="White"
+                                 BorderThickness="0"
+                                 VerticalScrollBarVisibility="Auto"/>
+                </ScrollViewer>
+            </GroupBox>
+
+            <!-- Download Status -->
+            <StackPanel Grid.Row="3" Orientation="Horizontal">
+                <TextBlock Text="Status:" Margin="0,0,10,0"/>
+                <TextBlock x:Name="DownloadStatusTextBlock" Text="Ready" 
+                           FontWeight="Bold"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
