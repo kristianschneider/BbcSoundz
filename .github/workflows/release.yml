@@ -21,13 +21,6 @@ jobs:
       with:
         dotnet-version: '9.0.x'
         
-    - name: Clear NuGet sources and add only nuget.org
-      run: |
-        dotnet nuget list source
-        dotnet nuget remove source "VaaS" --configfile nuget.config 2>$null || true
-        dotnet nuget add source "https://api.nuget.org/v3/index.json" --name "nuget.org" --configfile nuget.config 2>$null || true
-        dotnet nuget list source
-        
     - name: Restore dependencies
       run: dotnet restore
       
