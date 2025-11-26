@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace BbcSoundz.Configuration
 {
     public class BbcScheduleSource

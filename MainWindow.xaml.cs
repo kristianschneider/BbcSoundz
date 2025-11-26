@@ -1,234 +1,311 @@
-using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
-using BbcSoundz.Models;
-using BbcSoundz.Services;
-using BbcSoundz.Helpers;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media.Imaging;
+using BbcSoundz.Helpers;
+using BbcSoundz.Models;
+using BbcSoundz.Services;
 
 namespace BbcSoundz
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window
     {
-        private BbcScheduleScraper? _scraper;
         private YtDlpService? _ytDlpService;
         private DownloadManager? _downloadManager;
-        private ObservableCollection<ShowInfo> _searchResults;
-        private bool _isSearching = false;
-        private bool _isDownloading = false;
+        private BbcProgrammeContentService? _programmeContentService;
+        private GenreShowService? _genreShowService;
+        private ShowProgrammeService? _programmeListingService;
+        private ObservableCollection<ShowInfo> _availableShows = null!;
+        private ObservableCollection<ShowInfo> _availableProgrammes = null!;
+        private bool _isLoadingShows;
+        private bool _isLoadingProgrammes;
+        private bool _isDownloading;
+        private bool _isLoadingPreview;
+        private bool _suppressShowSelection;
         private CancellationTokenSource? _downloadCancellationTokenSource;
 
         public MainWindow()
         {
-            InitializeComponent();
-            _searchResults = new ObservableCollection<ShowInfo>();
-            ResultsListBox.ItemsSource = _searchResults;
+            try
+            {
+                InitializeComponent();
+                InitializeCollections();
+                InitializeServices();
+                ReportYtDlpStatus();
+                Loaded += MainWindow_Loaded;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error initializing MainWindow: {ex.Message}\n\nStack trace:\n{ex.StackTrace}",
+                    "Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                throw;
+            }
+        }
+
+        private void InitializeCollections()
+        {
+            _availableShows = new ObservableCollection<ShowInfo>();
+            _availableProgrammes = new ObservableCollection<ShowInfo>();
+            ShowComboBox.ItemsSource = _availableShows;
+            ProgrammesTreeView.ItemsSource = _availableProgrammes;
+        }
+
+        private void InitializeServices()
+        {
             _ytDlpService = new YtDlpService();
             _downloadManager = new DownloadManager();
+            _programmeContentService = new BbcProgrammeContentService();
+            _genreShowService = new GenreShowService();
+            _programmeListingService = new ShowProgrammeService();
+        }
 
-            // Check if yt-dlp is available
-            if (!_ytDlpService.IsYtDlpAvailable)
+        private void ReportYtDlpStatus()
+        {
+            if (_ytDlpService?.IsYtDlpAvailable != true)
             {
-                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, 
+                RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
                     "WARNING: yt-dlp.exe not found in application directory. Download functionality will not work.");
             }
             else
             {
-                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, 
+                RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
                     "yt-dlp.exe found. Ready for downloads.");
             }
-
-            // Scan for existing downloads at startup
-            LoadExistingDownloads();
         }
 
-        private async void SearchButton_Click(object sender, RoutedEventArgs e)
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (_isSearching)
-            {
-                MessageBox.Show("Search is already in progress. Please wait...", "Search In Progress", 
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            Loaded -= MainWindow_Loaded;
+            await LoadShowsAsync();
+        }
 
-            var filter = FilterTextBox.Text?.Trim();
-            if (string.IsNullOrEmpty(filter))
-            {
-                MessageBox.Show("Please enter a filter term to search for.", "Filter Required", 
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                FilterTextBox.Focus();
+        private async void RefreshShowsButton_Click(object sender, RoutedEventArgs e)
+        {
+            await LoadShowsAsync();
+        }
+
+        private async Task LoadShowsAsync()
+        {
+            if (_isLoadingShows || _genreShowService is null)
                 return;
-            }
 
             try
             {
-                _isSearching = true;
-                SearchButton.IsEnabled = false;
+                _isLoadingShows = true;
                 ProgressBar.Visibility = Visibility.Visible;
                 ProgressBar.IsIndeterminate = true;
-                _searchResults.Clear();
-                SelectedShowTextBlock.Text = "No show selected";
-                SelectedUrlTextBlock.Text = "";
-                DownloadUrlTextBox.Text = "";
-                DownloadButton.IsEnabled = false;
+                StatusTextBlock.Text = "Loading Dance & Electronica shows...";
 
-                _scraper = new BbcScheduleScraper();
+                _availableShows.Clear();
+                _availableProgrammes.Clear();
+                ClearProgrammeSelection();
 
-                var progress = new Progress<string>(message =>
+                var shows = await _genreShowService.GetShowsAsync();
+                var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var show in shows)
                 {
-                    StatusTextBlock.Text = message;
-                });
+                    var key = NormalizeKey(show.Url, show.Title);
+                    if (string.IsNullOrEmpty(key) || !seenUrls.Add(key))
+                    {
+                        continue;
+                    }
 
-                StatusTextBlock.Text = "Starting search...";
-
-                var results = await _scraper.ScrapeSchedulesAsync(filter, progress);
-
-                foreach (var show in results)
-                {
-                    // Check if this show has already been downloaded
-                    _downloadManager?.CheckDownloadStatus(show);
-                    _searchResults.Add(show);
+                    show.Url = key;
+                    _availableShows.Add(show);
                 }
 
-                StatusTextBlock.Text = $"Search completed. Found {results.Count} shows matching '{filter}'.";
-                
-                if (results.Count == 0)
-                {
-                    MessageBox.Show($"No shows found matching '{filter}' in the past 2 months.", 
-                        "No Results", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
+                StatusTextBlock.Text = _availableShows.Count == 0
+                    ? "No Dance & Electronica shows found."
+                    : "Select a show in the dropdown to load its programmes.";
+
+                _suppressShowSelection = true;
+                ShowComboBox.SelectedIndex = -1;
+                _suppressShowSelection = false;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"An error occurred during the search:\n{ex.Message}", 
-                    "Search Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                StatusTextBlock.Text = "Search failed.";
+                StatusTextBlock.Text = "Failed to load shows.";
+                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"ERROR: Could not load show list: {ex.Message}");
             }
             finally
             {
-                _isSearching = false;
-                SearchButton.IsEnabled = true;
+                _isLoadingShows = false;
                 ProgressBar.Visibility = Visibility.Collapsed;
                 ProgressBar.IsIndeterminate = false;
-                _scraper?.Dispose();
-                _scraper = null;
             }
         }
 
-        private void LoadExistingDownloads()
+        private static string NormalizeKey(string? url, string? title = null)
         {
+            var normalizedUrl = ShowUrlNormalizer.Normalize(url);
+            if (!string.IsNullOrEmpty(normalizedUrl))
+            {
+                return normalizedUrl;
+            }
+
+            return (title ?? string.Empty).Trim();
+        }
+
+        private async Task LoadProgrammesForShowAsync(ShowInfo show)
+        {
+            if (_programmeListingService is null || _isLoadingProgrammes)
+                return;
+
             try
             {
-                var existingDownloads = _downloadManager?.ScanExistingDownloads();
-                if (existingDownloads != null)
-                {
-                    foreach (var download in existingDownloads)
-                    {
-                        _searchResults.Add(download);
-                    }
+                _isLoadingProgrammes = true;
+                _availableProgrammes.Clear();
+                ClearProgrammeSelection();
 
-                    if (existingDownloads.Any())
-                    {
-                        var count = existingDownloads.Count();
-                        StatusTextBlock.Text = $"Found {count} existing download{(count == 1 ? "" : "s")} in Downloads folder.";
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, 
-                            $"Loaded {count} existing download{(count == 1 ? "" : "s")} from Downloads folder.");
-                    }
-                    else
-                    {
-                        StatusTextBlock.Text = "No existing downloads found.";
-                    }
+                if (string.IsNullOrEmpty(show?.Url))
+                {
+                    StatusTextBlock.Text = "Show URL missing. Cannot load programmes.";
+                    return;
                 }
+
+                StatusTextBlock.Text = $"Loading programmes for {show.Title}...";
+                var programmes = await _programmeListingService.GetProgrammesAsync($"{show.Url}/episodes/player");
+
+                foreach (var programme in programmes)
+                {
+                    _downloadManager?.CheckDownloadStatus(programme);
+                    _availableProgrammes.Add(programme);
+                }
+
+                StatusTextBlock.Text = programmes.Count == 0
+                    ? $"No programmes found for {show.Title}."
+                    : $"Loaded {programmes.Count} programme{(programmes.Count == 1 ? string.Empty : "s")} for {show.Title}.";
             }
             catch (Exception ex)
             {
-                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, 
-                    $"Warning: Could not scan Downloads folder: {ex.Message}");
-                StatusTextBlock.Text = "Ready";
+                StatusTextBlock.Text = $"Failed to load programmes for {show.Title}.";
+                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"ERROR: Could not load programmes: {ex.Message}");
+            }
+            finally
+            {
+                _isLoadingProgrammes = false;
             }
         }
 
-        private void ResultsListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void ClearProgrammeSelection()
         {
-            if (ResultsListBox.SelectedItem is ShowInfo selectedShow)
+            SelectedShowTextBlock.Text = "No programme selected";
+            SelectedUrlTextBlock.Text = string.Empty;
+            DownloadUrlTextBox.Text = string.Empty;
+            DownloadButton.IsEnabled = false;
+            DownloadStatusTextBlock.Text = "Ready";
+            ClearPreview();
+        }
+
+        private async void ShowComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressShowSelection)
+                return;
+
+            if (ShowComboBox.SelectedItem is ShowInfo selectedShow)
             {
-                SelectedShowTextBlock.Text = selectedShow.Title;
-                SelectedUrlTextBlock.Text = selectedShow.Url;
-                DownloadUrlTextBox.Text = selectedShow.Url;
-                
-                if (selectedShow.IsDownloaded)
+                await LoadProgrammesForShowAsync(selectedShow);
+            }
+            else
+            {
+                _availableProgrammes.Clear();
+                ClearProgrammeSelection();
+            }
+        }
+
+        private async void ProgrammesTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (ProgrammesTreeView.SelectedItem is ShowInfo programme)
+            {
+                SelectedShowTextBlock.Text = programme.DisplayName ?? programme.Title;
+                SelectedUrlTextBlock.Text = programme.Url;
+                DownloadUrlTextBox.Text = programme.Url;
+
+                if (programme.IsDownloaded)
                 {
                     DownloadButton.IsEnabled = false;
                     DownloadStatusTextBlock.Text = "Already downloaded - double-click to play";
                 }
+                else if (string.IsNullOrEmpty(programme.Url))
+                {
+                    DownloadButton.IsEnabled = false;
+                    DownloadStatusTextBlock.Text = "No URL available";
+                }
                 else
                 {
-                    DownloadButton.IsEnabled = !_isDownloading && _ytDlpService!.IsYtDlpAvailable;
+                    DownloadButton.IsEnabled = !_isDownloading && _ytDlpService?.IsYtDlpAvailable == true;
                     DownloadStatusTextBlock.Text = "Ready to download";
+                }
+
+                if (!string.IsNullOrEmpty(programme.Url))
+                {
+                    await LoadProgrammePreview(programme.Url);
+                }
+                else
+                {
+                    ClearPreview();
                 }
             }
             else
             {
-                SelectedShowTextBlock.Text = "No show selected";
-                SelectedUrlTextBlock.Text = "";
-                DownloadUrlTextBox.Text = "";
-                DownloadButton.IsEnabled = false;
-                DownloadStatusTextBlock.Text = "Ready";
+                ClearProgrammeSelection();
             }
         }
 
-        private void ResultsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        private void ProgrammesTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (ResultsListBox.SelectedItem is ShowInfo selectedShow)
+            if (ProgrammesTreeView.SelectedItem is not ShowInfo programme)
+                return;
+
+            if (programme.IsDownloaded)
             {
-                if (selectedShow.IsDownloaded)
+                RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"Playing downloaded file: {programme.Title}");
+                var success = _downloadManager?.PlayDownloadedFile(programme) ?? false;
+                if (success)
                 {
-                    // Play the already downloaded file
-                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"Playing downloaded file: {selectedShow.Title}");
-                    
-                    var success = _downloadManager?.PlayDownloadedFile(selectedShow) ?? false;
-                    if (success)
-                    {
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "Media player launched successfully!");
-                    }
-                    else
-                    {
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "ERROR: Could not launch media player for downloaded file");
-                        
-                        // File might have been deleted, recheck status
-                        _downloadManager?.CheckDownloadStatus(selectedShow);
-                    }
+                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "Media player launched successfully!");
                 }
-                else if (_ytDlpService!.IsYtDlpAvailable && !_isDownloading)
+                else
                 {
-                    // Download the file
-                    StartDownload(selectedShow.Url);
+                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                        "ERROR: Could not launch media player for downloaded file");
+                    _downloadManager?.CheckDownloadStatus(programme);
                 }
+            }
+            else if (_ytDlpService?.IsYtDlpAvailable == true && !_isDownloading)
+            {
+                StartDownload(programme);
             }
         }
 
         private void DownloadButton_Click(object sender, RoutedEventArgs e)
         {
-            var url = DownloadUrlTextBox.Text?.Trim();
-            if (!string.IsNullOrEmpty(url))
+            if (ProgrammesTreeView.SelectedItem is ShowInfo programme)
             {
-                StartDownload(url);
+                StartDownload(programme);
             }
         }
 
-        private async void StartDownload(string url)
+        private async void StartDownload(ShowInfo programme)
+        {
+            if (programme == null || string.IsNullOrEmpty(programme.Url))
+                return;
+
+            await StartDownloadInternal(programme.Url, programme.ImageUrl);
+        }
+
+        private async Task StartDownloadInternal(string url, string? imageUrl)
         {
             if (_isDownloading || _ytDlpService == null)
                 return;
@@ -239,11 +316,10 @@ namespace BbcSoundz
                 DownloadButton.IsEnabled = false;
                 StopDownloadButton.IsEnabled = true;
                 DownloadStatusTextBlock.Text = "Downloading...";
-                
+
                 _downloadCancellationTokenSource = new CancellationTokenSource();
 
-                // Create downloads directory
-                var downloadsPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
+                var downloadsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
                 Directory.CreateDirectory(downloadsPath);
 
                 var progress = new Progress<string>(message =>
@@ -251,23 +327,23 @@ namespace BbcSoundz
                     RichTextBoxHelper.AppendColoredText(OutputRichTextBox, message);
                 });
 
-                var downloadedFile = await _ytDlpService.DownloadAsync(url, downloadsPath, progress, _downloadCancellationTokenSource.Token);
+                var downloadedFile = await _ytDlpService.DownloadAsync(url, downloadsPath, imageUrl, progress,
+                    _downloadCancellationTokenSource.Token);
 
                 if (!string.IsNullOrEmpty(downloadedFile))
                 {
                     DownloadStatusTextBlock.Text = "Download completed";
-                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "");
+                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox, string.Empty);
                     RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"Files saved to: {downloadsPath}");
-                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"Downloaded file: {System.IO.Path.GetFileName(downloadedFile)}");
-                    
-                    // Update download status for any matching shows in the list
-                    var matchingShow = _searchResults.FirstOrDefault(s => s.Url == url);
-                    if (matchingShow != null)
+                    RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                        $"Downloaded file: {Path.GetFileName(downloadedFile)}");
+
+                    var matchingProgramme = _availableProgrammes.FirstOrDefault(s => s.Url == url);
+                    if (matchingProgramme != null)
                     {
-                        _downloadManager?.UpdateDownloadStatus(matchingShow, downloadedFile);
+                        _downloadManager?.UpdateDownloadStatus(matchingProgramme, downloadedFile);
                     }
-                    
-                    // Launch default program with the downloaded file
+
                     await LaunchDefaultPlayer(downloadedFile);
                 }
                 else
@@ -283,7 +359,10 @@ namespace BbcSoundz
             finally
             {
                 _isDownloading = false;
-                DownloadButton.IsEnabled = ResultsListBox.SelectedItem != null && _ytDlpService.IsYtDlpAvailable;
+                DownloadButton.IsEnabled = ProgrammesTreeView.SelectedItem is ShowInfo item
+                    && _ytDlpService?.IsYtDlpAvailable == true
+                    && !item.IsDownloaded
+                    && !string.IsNullOrEmpty(item.Url);
                 StopDownloadButton.IsEnabled = false;
                 _downloadCancellationTokenSource?.Dispose();
                 _downloadCancellationTokenSource = null;
@@ -299,17 +378,18 @@ namespace BbcSoundz
                     if (!File.Exists(filePath))
                     {
                         Application.Current.Dispatcher.Invoke(() =>
-                            RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"WARNING: Downloaded file not found: {filePath}"));
+                            RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                                $"WARNING: Downloaded file not found: {filePath}"));
                         return;
                     }
 
                     Application.Current.Dispatcher.Invoke(() =>
                     {
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "");
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "Opening file with default program...");
+                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, string.Empty);
+                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                            "Opening file with default program...");
                     });
 
-                    // Use Windows default file association (like double-clicking)
                     var startInfo = new ProcessStartInfo
                     {
                         FileName = filePath,
@@ -317,13 +397,15 @@ namespace BbcSoundz
                     };
                     Process.Start(startInfo);
                     Application.Current.Dispatcher.Invoke(() =>
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, "File opened with default program successfully!"));
+                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                            "File opened with default program successfully!"));
                 }
                 catch (Exception ex)
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
-                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"ERROR: Could not open file: {ex.Message}");
+                        RichTextBoxHelper.AppendColoredText(OutputRichTextBox,
+                            $"ERROR: Could not open file: {ex.Message}");
                         RichTextBoxHelper.AppendColoredText(OutputRichTextBox, $"File location: {filePath}");
                     });
                 }
@@ -345,31 +427,185 @@ namespace BbcSoundz
 
         private void SelectedUrlTextBlock_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            if (!string.IsNullOrEmpty(SelectedUrlTextBlock.Text))
+            if (string.IsNullOrEmpty(SelectedUrlTextBlock.Text))
+                return;
+
+            try
             {
-                try
+                Process.Start(new ProcessStartInfo
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = SelectedUrlTextBlock.Text,
-                        UseShellExecute = true
-                    });
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Failed to open URL:\n{ex.Message}", "Error", 
-                        MessageBoxButton.OK, MessageBoxImage.Error);
-                }
+                    FileName = SelectedUrlTextBlock.Text,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to open URL:\n{ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         protected override void OnClosed(EventArgs e)
         {
-            _scraper?.Dispose();
             _ytDlpService?.Dispose();
+            _programmeContentService?.Dispose();
             _downloadCancellationTokenSource?.Cancel();
             _downloadCancellationTokenSource?.Dispose();
             base.OnClosed(e);
         }
+
+        private async Task LoadProgrammePreview(string programmeUrl)
+        {
+            if (_isLoadingPreview || string.IsNullOrEmpty(programmeUrl) || _programmeContentService is null)
+                return;
+
+            try
+            {
+                _isLoadingPreview = true;
+                ShowPreviewLoading();
+
+                var content = await _programmeContentService.GetProgrammeContentAsync(programmeUrl);
+
+                if (content != null)
+                {
+                    await DisplayProgrammeContent(content);
+                }
+                else
+                {
+                    ShowPreviewError("Failed to load programme content");
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowPreviewError($"Error loading preview: {ex.Message}");
+            }
+            finally
+            {
+                _isLoadingPreview = false;
+                HidePreviewLoading();
+            }
+        }
+
+        private void ClearPreview()
+        {
+            PreviewMessageTextBlock.Visibility = Visibility.Visible;
+            PreviewMessageTextBlock.Text = "Select a programme to see preview";
+
+            PreviewImageBorder.Visibility = Visibility.Collapsed;
+            PreviewTitleTextBlock.Visibility = Visibility.Collapsed;
+            PreviewSubtitleTextBlock.Visibility = Visibility.Collapsed;
+            PreviewDescriptionTextBlock.Visibility = Visibility.Collapsed;
+            PreviewDetailsPanel.Visibility = Visibility.Collapsed;
+            PreviewErrorTextBlock.Visibility = Visibility.Collapsed;
+            PreviewLoadingPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowPreviewLoading()
+        {
+            PreviewMessageTextBlock.Visibility = Visibility.Collapsed;
+            PreviewLoadingPanel.Visibility = Visibility.Visible;
+            PreviewErrorTextBlock.Visibility = Visibility.Collapsed;
+        }
+
+        private void HidePreviewLoading()
+        {
+            PreviewLoadingPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowPreviewError(string message)
+        {
+            PreviewMessageTextBlock.Visibility = Visibility.Collapsed;
+            PreviewErrorTextBlock.Text = message;
+            PreviewErrorTextBlock.Visibility = Visibility.Visible;
+
+            PreviewImageBorder.Visibility = Visibility.Collapsed;
+            PreviewTitleTextBlock.Visibility = Visibility.Collapsed;
+            PreviewSubtitleTextBlock.Visibility = Visibility.Collapsed;
+            PreviewDescriptionTextBlock.Visibility = Visibility.Collapsed;
+            PreviewDetailsPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private async Task DisplayProgrammeContent(ProgrammeContent content)
+        {
+            if (content.HasError)
+            {
+                ShowPreviewError(content.ErrorMessage);
+                return;
+            }
+
+            PreviewMessageTextBlock.Visibility = Visibility.Collapsed;
+            PreviewErrorTextBlock.Visibility = Visibility.Collapsed;
+
+            if (!string.IsNullOrEmpty(content.Title))
+            {
+                PreviewTitleTextBlock.Text = content.Title;
+                PreviewTitleTextBlock.Visibility = Visibility.Visible;
+            }
+
+            if (content.HasSubtitle)
+            {
+                PreviewSubtitleTextBlock.Text = content.Subtitle;
+                PreviewSubtitleTextBlock.Visibility = Visibility.Visible;
+            }
+
+            if (content.HasDescription)
+            {
+                PreviewDescriptionTextBlock.Text = content.Description;
+                PreviewDescriptionTextBlock.Visibility = Visibility.Visible;
+            }
+
+            var hasDetails = false;
+            if (content.HasBrand)
+            {
+                PreviewBrandTextBlock.Text = $"Programme: {content.Brand}";
+                hasDetails = true;
+            }
+
+            if (content.HasDuration)
+            {
+                PreviewDurationTextBlock.Text = $"Duration: {content.Duration}";
+                hasDetails = true;
+            }
+
+            if (content.HasBroadcastDate)
+            {
+                PreviewDateTextBlock.Text = $"Broadcast: {content.BroadcastDate}";
+                hasDetails = true;
+            }
+
+            if (hasDetails)
+            {
+                PreviewDetailsPanel.Visibility = Visibility.Visible;
+            }
+
+            if (content.HasImage)
+            {
+                await LoadPreviewImage(content.ImageUrl);
+            }
+        }
+
+        private async Task LoadPreviewImage(string imageUrl)
+        {
+            try
+            {
+                using var httpClient = new HttpClient();
+                var imageBytes = await httpClient.GetByteArrayAsync(imageUrl);
+
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.StreamSource = new MemoryStream(imageBytes);
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+                bitmap.Freeze();
+
+                PreviewImage.Source = bitmap;
+                PreviewImageBorder.Visibility = Visibility.Visible;
+            }
+            catch
+            {
+                PreviewImageBorder.Visibility = Visibility.Collapsed;
+            }
+        }
     }
 }
+

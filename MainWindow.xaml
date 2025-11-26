@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:BbcSoundz"
         mc:Ignorable="d"
-        Title="BBC Soundz Scraper" Height="800" Width="1200"
+        Title="BBC Soundz Scraper" Height="800" Width="1600"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <local:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
@@ -13,6 +13,8 @@
     </Window.Resources>
     <Grid Margin="10">
         <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*"/>
+            <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="2*"/>
             <ColumnDefinition Width="5"/>
             <ColumnDefinition Width="2*"/>
@@ -33,14 +35,15 @@
                        FontSize="20" FontWeight="Bold" 
                        HorizontalAlignment="Center" Margin="0,0,0,15"/>
 
-            <!-- Filter Input -->
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
-                <TextBlock Text="Filter Shows:" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <TextBox x:Name="FilterTextBox" Width="150" Height="25" 
-                         Text="Essential" VerticalAlignment="Center"/>
-                <Button x:Name="SearchButton" Content="Search" 
-                        Width="80" Height="30" Margin="10,0,0,0"
-                        Click="SearchButton_Click"/>
+            <!-- Show Selection -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
+                <TextBlock Text="Select Show:" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ComboBox x:Name="ShowComboBox" Width="320" Height="30" 
+                          DisplayMemberPath="DisplayName"
+                          SelectionChanged="ShowComboBox_SelectionChanged"/>
+                <Button x:Name="RefreshShowsButton" Content="Reload list" 
+                        Width="110" Height="30" Margin="10,0,0,0"
+                        Click="RefreshShowsButton_Click"/>
             </StackPanel>
 
             <!-- Progress and Status -->
@@ -51,12 +54,12 @@
                            VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
 
-            <!-- Results List -->
-            <GroupBox Grid.Row="3" Header="Search Results" Margin="0,0,0,10">
-                <ListBox x:Name="ResultsListBox" 
-                         SelectionChanged="ResultsListBox_SelectionChanged"
-                         MouseDoubleClick="ResultsListBox_MouseDoubleClick">
-                    <ListBox.ItemTemplate>
+            <!-- Programmes Tree -->
+            <GroupBox Grid.Row="3" Header="Available Programmes" Margin="0,0,0,10">
+                <TreeView x:Name="ProgrammesTreeView"
+                          SelectedItemChanged="ProgrammesTreeView_SelectedItemChanged"
+                          MouseDoubleClick="ProgrammesTreeView_MouseDoubleClick">
+                    <TreeView.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal" Margin="2">
                                 <TextBlock Text="▶" 
@@ -71,15 +74,21 @@
                                            Margin="0,0,5,0"
                                            Visibility="{Binding IsDownloaded, Converter={StaticResource BooleanToVisibilityConverter}}"
                                            ToolTip="Downloaded file available"/>
-                                <TextBlock Text="{Binding DisplayName}" 
-                                           TextWrapping="Wrap"
-                                           FontFamily="Segoe UI"
-                                           FontSize="12"
-                                           Foreground="{Binding IsDownloaded, Converter={StaticResource DownloadedColorConverter}, FallbackValue=Black}"/>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding DisplayName}" 
+                                               TextWrapping="Wrap"
+                                               FontFamily="Segoe UI"
+                                               FontSize="12"
+                                               Foreground="{Binding IsDownloaded, Converter={StaticResource DownloadedColorConverter}, FallbackValue=Black}"/>
+                                    <TextBlock Text="{Binding Description}" 
+                                               FontSize="10"
+                                               Foreground="DarkGray"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
                             </StackPanel>
                         </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                    </TreeView.ItemTemplate>
+                </TreeView>
             </GroupBox>
 
             <!-- Selected Item Info -->
@@ -99,8 +108,112 @@
         <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" 
                       Background="Gray" ResizeBehavior="PreviousAndNext"/>
 
-        <!-- Right Panel - Download Section -->
+        <!-- Middle Panel - Preview Section -->
         <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Preview Title -->
+            <TextBlock Grid.Row="0" Text="Programme Preview" 
+                       FontSize="20" FontWeight="Bold" 
+                       HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+            <!-- Preview Content -->
+            <GroupBox Grid.Row="1" Header="BBC Programme Details">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="PreviewPanel" Margin="10">
+                        <TextBlock x:Name="PreviewMessageTextBlock" 
+                                   Text="Select a show to see preview" 
+                                   FontStyle="Italic" 
+                                   HorizontalAlignment="Center" 
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"/>
+                        
+                        <!-- Programme Image -->
+                        <Border x:Name="PreviewImageBorder" 
+                                Visibility="Collapsed" 
+                                Margin="0,0,0,10"
+                                BorderBrush="Gray" 
+                                BorderThickness="1"
+                                HorizontalAlignment="Center">
+                            <Image x:Name="PreviewImage" 
+                                   MaxWidth="300" 
+                                   MaxHeight="200"
+                                   Stretch="Uniform"/>
+                        </Border>
+                        
+                        <!-- Programme Title -->
+                        <TextBlock x:Name="PreviewTitleTextBlock" 
+                                   FontSize="16" 
+                                   FontWeight="Bold" 
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,10"
+                                   Visibility="Collapsed"/>
+                        
+                        <!-- Programme Subtitle -->
+                        <TextBlock x:Name="PreviewSubtitleTextBlock" 
+                                   FontSize="14" 
+                                   FontStyle="Italic"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,10"
+                                   Visibility="Collapsed"/>
+                        
+                        <!-- Programme Description -->
+                        <TextBlock x:Name="PreviewDescriptionTextBlock" 
+                                   FontSize="12" 
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,10"
+                                   Visibility="Collapsed"/>
+                        
+                        <!-- Programme Details -->
+                        <StackPanel x:Name="PreviewDetailsPanel" 
+                                    Visibility="Collapsed" 
+                                    Margin="0,0,0,10">
+                            <TextBlock x:Name="PreviewBrandTextBlock" 
+                                       FontSize="12" 
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,5"/>
+                            <TextBlock x:Name="PreviewDurationTextBlock" 
+                                       FontSize="12" 
+                                       Foreground="DarkBlue"
+                                       Margin="0,0,0,5"/>
+                            <TextBlock x:Name="PreviewDateTextBlock" 
+                                       FontSize="12" 
+                                       Foreground="DarkGreen"
+                                       Margin="0,0,0,5"/>
+                        </StackPanel>
+                        
+                        <!-- Loading indicator -->
+                        <StackPanel x:Name="PreviewLoadingPanel" 
+                                    Orientation="Horizontal" 
+                                    HorizontalAlignment="Center"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="Loading preview..." 
+                                       FontStyle="Italic" 
+                                       Margin="0,0,10,0"/>
+                            <TextBlock Text="⏳" FontSize="16"/>
+                        </StackPanel>
+                        
+                        <!-- Error message -->
+                        <TextBlock x:Name="PreviewErrorTextBlock" 
+                                   Text="" 
+                                   Foreground="Red" 
+                                   FontStyle="Italic"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </GroupBox>
+        </Grid>
+
+        <!-- Splitter -->
+        <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" 
+                      Background="Gray" ResizeBehavior="PreviousAndNext"/>
+
+        <!-- Right Panel - Download Section -->
+        <Grid Grid.Column="4">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>

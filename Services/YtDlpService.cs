@@ -1,7 +1,14 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Net.Http;
+using TagLibFile = TagLib.File;
 
 namespace BbcSoundz.Services
 {
@@ -9,17 +16,21 @@ namespace BbcSoundz.Services
     {
         private Process? _currentProcess;
         private readonly string _ytDlpPath;
+        private readonly HttpClient _httpClient;
 
         public YtDlpService()
         {
             // Get the path to yt-dlp.exe in the application directory
             var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
             _ytDlpPath = Path.Combine(appDirectory, "yt-dlp.exe");
+            _httpClient = new HttpClient();
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         }
 
         public bool IsYtDlpAvailable => File.Exists(_ytDlpPath);
 
-        public async Task<string?> DownloadAsync(string url, string outputDirectory, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+        public async Task<string?> DownloadAsync(string url, string outputDirectory, string? imageUrl = null, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
             if (!IsYtDlpAvailable)
             {
@@ -34,8 +45,8 @@ namespace BbcSoundz.Services
                 // Ensure output directory exists
                 Directory.CreateDirectory(outputDirectory);
 
-                // Simple command: just yt-dlp.exe URL
-                var arguments = $"\"{url}\"";
+                // Build yt-dlp command without post-processing to avoid ffmpeg dependency
+                var arguments = BuildDownloadCommand(url);
                 
                 progress?.Report($"Starting download: {url}");
                 progress?.Report($"Command: yt-dlp {arguments}");
@@ -158,15 +169,17 @@ namespace BbcSoundz.Services
                     progress?.Report($"Download failed with exit code: {exitCode}");
                 }
 
-                _currentProcess?.Dispose();
-                _currentProcess = null;
-                
                 return success ? downloadedFileName : null;
             }
             catch (Exception ex)
             {
                 progress?.Report($"ERROR: {ex.Message}");
                 return null;
+            }
+            finally
+            {
+                _currentProcess?.Dispose();
+                _currentProcess = null;
             }
         }
 
@@ -185,12 +198,28 @@ namespace BbcSoundz.Services
             }
         }
 
+        private string BuildDownloadCommand(string url)
+        {
+            var args = new List<string>
+            {
+                "--format", "bestaudio",
+                "--output", "\"%(title)s.%(ext)s\"",
+                "--user-agent", "\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\"",
+                "--newline"
+            };
+
+            args.Add($"\"{url}\"");
+            
+            return string.Join(" ", args);
+        }
+
         public bool IsDownloading => _currentProcess != null && !_currentProcess.HasExited;
 
         public void Dispose()
         {
             StopDownload();
             _currentProcess?.Dispose();
+            _httpClient?.Dispose();
         }
     }
 }
